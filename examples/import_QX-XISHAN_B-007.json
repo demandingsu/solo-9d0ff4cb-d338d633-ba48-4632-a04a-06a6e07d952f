@@ -1,0 +1,17 @@
+{
+  "source_library": "QX-XISHAN",
+  "source_batch": "B-007",
+  "fields": [
+    {"field_id": "t01", "field_name": "温度读数"},
+    {"field_id": "p01", "field_name": "气压读数"},
+    {"field_id": "h01", "field_name": "相对湿度"}
+  ],
+  "rows": [
+    {"station": "S03", "hour_utc": "2026-11-18T00:00",
+     "readings": {"t01": 7.2, "p01": 1009.8, "h01": 82}},
+    {"station": "S03", "hour_utc": "2026-11-18T01:00",
+     "readings": {"t01": 7.8, "p01": 1009.4, "h01": 80}},
+    {"station": "S04", "hour_utc": "2026-11-18 00:00",
+     "readings": {"t01": 4.1, "p01": 1011.0, "h01": 91}}
+  ]
+}

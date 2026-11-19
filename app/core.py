@@ -87,7 +87,8 @@ def list_versions(conn) -> list[dict]:
 def list_batches(conn) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT b.id, b.filename, b.row_count, b.uploaded_at, v.version_no
+        SELECT b.id, b.filename, b.row_count, b.uploaded_at, v.version_no,
+               b.source_library, b.source_batch
         FROM batches b JOIN schema_versions v ON v.id = b.version_id
         ORDER BY b.id
         """
@@ -425,7 +426,8 @@ def query_observations(conn, station=None, hour_from=None, hour_to=None,
         where.append("o.hour_utc <= ?")
         params.append(hour_to)
     sql = (
-        "SELECT o.station, o.hour_utc, o.values_json, o.batch_id, b.version_id "
+        "SELECT o.station, o.hour_utc, o.values_json, o.batch_id, b.version_id, "
+        "b.source_library, b.source_batch "
         "FROM observations o JOIN batches b ON b.id = o.batch_id"
     )
     if where:
@@ -451,6 +453,8 @@ def query_observations(conn, station=None, hour_from=None, hour_to=None,
         rows.append({
             "batch_id": r["batch_id"],
             "batch_version_no": ver_map.get(r["version_id"]),
+            "source_library": r["source_library"],
+            "source_batch": r["source_batch"],
             "values": values,
         })
     return {

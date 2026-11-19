@@ -1,0 +1,16 @@
+{
+  "source_library": "QX-DONGHAI",
+  "source_batch": "B-008",
+  "fields": [
+    {"field_id": "f-temp", "field_name": "气温(离线)"},
+    {"field_id": "f-pres", "field_name": "本站气压(离线)"}
+  ],
+  "rows": [
+    {"station": "S01", "hour_utc": "2026-11-19T00:00",
+     "readings": {"f-temp": 5, "f-pres": 1013}},
+    {"station": "S01", "hour_utc": "not-a-time",
+     "readings": {"f-temp": "abc", "f-pres": 1012}},
+    {"station": "", "hour_utc": "2026-11-19T02:00",
+     "readings": {"f-temp": 4, "f-pres": 1011, "f-unknown": 9}}
+  ]
+}

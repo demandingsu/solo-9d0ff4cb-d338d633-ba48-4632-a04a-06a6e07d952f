@@ -61,8 +61,22 @@ summary { cursor:pointer; }
   <div id="upload-result" class="msg"></div>
 </section>
 
+<section id="sec-import">
+  <h2>④ 离线库补录批次导入（单批 JSON）</h2>
+  <p class="muted">各区县离线观测库各自编号。上传含源库号、源批次号、字段编号/名称与逐行读数的 JSON，
+    先把源字段按稳定列标识配到现役数据列，预览读数与校验错误后再入库。
+    同库同号文件原样重传返回原批次号，内容有变拒收；现役结构换版后须重新预览。</p>
+  <div class="row">
+    <input type="file" id="imp-file" accept=".json,application/json">
+    <button onclick="importUpload()">上传并配对</button>
+  </div>
+  <div id="imp-msg" class="msg"></div>
+  <div id="imp-mapping"></div>
+  <div id="imp-preview"></div>
+</section>
+
 <section id="sec-query">
-  <h2>④ 查询观测</h2>
+  <h2>⑤ 查询观测</h2>
   <div class="row">
     <label>站号 <input id="q-station" placeholder="如 S01（可空）"></label>
     <label>起始 <input id="q-from" placeholder="2026-11-18T00:00"></label>
@@ -74,19 +88,19 @@ summary { cursor:pointer; }
 </section>
 
 <section id="sec-versions">
-  <h2>⑤ 版本历史</h2>
+  <h2>⑥ 版本历史</h2>
   <div id="versions-box"></div>
 </section>
 
 <section id="sec-batches">
-  <h2>⑥ 批次列表</h2>
+  <h2>⑦ 批次列表</h2>
   <div id="batches-box"></div>
 </section>
 
 </main>
 <script>
 const $ = id => document.getElementById(id);
-const state = { current: null, versions: [], batches: [] };
+const state = { current: null, versions: [], batches: [], imp: null };
 const TYPE_LABEL = { station:'站号(系统)', hour:'UTC小时(系统)', integer:'整数', float:'小数', text:'文本' };
 
 async function api(path, opts){
@@ -239,6 +253,120 @@ async function uploadCsv(){
   }catch(e){ showErr(msg, e); }
 }
 
+/* ---------- 离线库补录 JSON 导入 ---------- */
+
+function resetImport(){
+  state.imp = null;
+  $('imp-mapping').innerHTML = '';
+  $('imp-preview').innerHTML = '';
+}
+
+async function importUpload(withMapping){
+  const msg = $('imp-msg'); msg.innerHTML = '';
+  $('imp-preview').innerHTML = '';
+  const f = $('imp-file').files[0];
+  if(!f){ msg.innerHTML = '<div class="err">请选择补录批次 JSON 文件</div>'; return; }
+  const fd = new FormData(); fd.append('file', f);
+  if(withMapping && state.imp && state.imp.fields){
+    const mapping = [];
+    document.querySelectorAll('#imp-mapping select[data-fid]').forEach(sel => {
+      if(sel.value) mapping.push({ field_id: sel.getAttribute('data-fid'), column_id: sel.value });
+    });
+    fd.append('mapping', JSON.stringify(mapping));
+  }
+  try{
+    const d = await api('/api/imports/preview', { method:'POST', body: fd });
+    if(d.already_imported){
+      state.imp = null;
+      $('imp-mapping').innerHTML = '';
+      msg.innerHTML = '<div class="ok">✓ ' + esc(d.message) +
+        '：源库 <b>' + esc(d.source_library) + '</b> 源批次 <b>' + esc(d.source_batch) +
+        '</b> → 入库批次 <b>#' + d.batch_id + '</b></div>';
+      return;
+    }
+    state.imp = d;
+    if(d.mapping_required){
+      renderMapping(d);
+      msg.innerHTML = '<div class="muted">已读取源库 <b>' + esc(d.source_library) +
+        '</b> 的批次 <b>' + esc(d.source_batch) + '</b>（' + d.total_rows +
+        ' 行）。请完成字段配对后点「生成预览」。</div>';
+    }else{
+      renderPreview(d);
+    }
+  }catch(e){ showErr(msg, e); }
+}
+
+function renderMapping(d){
+  const box = $('imp-mapping');
+  const opts = d.active_columns.map(c =>
+    '<option value="' + esc(c.column_id) + '">' + esc(c.name) + '（' + TYPE_LABEL[c.type] +
+    ' · ' + esc(c.column_id) + '）</option>').join('');
+  let h = '<p class="muted">现役版本 v' + d.version_no +
+    ' · 源字段配对到现役数据列（站号/小时为系统列，不参与配对）：</p>';
+  h += '<table><tr><th>源字段编号</th><th>源字段名称</th><th>配对到现役列</th></tr>';
+  d.fields.forEach((f, i) => {
+    h += '<tr><td><code>' + esc(f.field_id) + '</code></td><td>' + esc(f.field_name || '—') +
+      '</td><td><select data-fid="' + esc(f.field_id) + '">' +
+      '<option value="">（不导入）</option>' +
+      (i < d.active_columns.length ?
+        opts.replace('<option value="' + esc(d.active_columns[i].column_id) + '"',
+                     '<option value="' + esc(d.active_columns[i].column_id) + '" selected')
+        : opts) +
+      '</select></td></tr>';
+  });
+  h += '</table><div class="row"><button onclick="importUpload(true)">生成预览</button></div>';
+  box.innerHTML = h;
+}
+
+function renderPreview(d){
+  const box = $('imp-preview');
+  let h = '<p>预览 #' + d.preview_id + ' · 钉住现役 v' + d.version_no +
+    ' · 可入库 <b class="ok">' + d.row_count + '</b> 行 / 共 ' + d.total_rows + ' 行' +
+    (d.error_count ? ' · <b class="err">' + d.error_count + ' 处校验错误</b>' : '') + '</p>';
+  h += '<details><summary class="muted">字段配对（' + d.mapping.length + ' 项）</summary><table>' +
+    '<tr><th>源字段</th><th>→</th><th>现役列（标识 / 类型）</th></tr>' +
+    d.mapping.map(p => '<tr><td><code>' + esc(p.field_id) + '</code> ' + esc(p.field_name || '') +
+      '</td><td>→</td><td>' + esc(p.name) + ' <code>' + esc(p.column_id) +
+      '</code>（' + TYPE_LABEL[p.type] + '）</td></tr>').join('') + '</table></details>';
+  if(d.errors && d.errors.length){
+    h += '<ul class="err-list">' + d.errors.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+  }
+  const colNames = d.mapping.map(p => p.name);
+  h += '<table><tr><th>行</th><th>站号</th><th>UTC小时</th>' +
+    colNames.map(n => '<th>' + esc(n) + '</th>').join('') + '<th>校验</th></tr>';
+  d.preview_rows.forEach(r => {
+    const errCell = r.errors.length ?
+      '<span class="err">' + r.errors.map(esc).join('<br>') + '</span>' : '<span class="ok">✓</span>';
+    h += '<tr><td>' + r.line + '</td><td>' + esc(r.station ?? '') + '</td><td>' + esc(r.hour_utc ?? '') +
+      '</td>' + colNames.map(n => {
+        const v = r.values[n];
+        return '<td>' + (v === null || v === undefined ? '<span class="nullcell">（空）</span>' : esc(v)) + '</td>';
+      }).join('') + '<td>' + errCell + '</td></tr>';
+  });
+  h += '</table>';
+  if(d.committable){
+    h += '<div class="row"><button onclick="commitImport()">确认入库（只采用本预览的文件与配对）</button></div>';
+  }else{
+    h += '<p class="err">存在校验错误，不能入库；请修正源文件后重新上传预览。</p>';
+  }
+  box.innerHTML = h;
+}
+
+async function commitImport(){
+  const msg = $('imp-msg'); msg.innerHTML = '';
+  const d = state.imp;
+  if(!d || !d.preview_id) return;
+  try{
+    const r = await api('/api/imports/' + d.preview_id + '/commit', { method:'POST' });
+    const tag = r.idempotent ? '（幂等返回）' : '';
+    msg.innerHTML = '<div class="ok">✓ 已入库批次 <b>#' + r.batch_id + '</b>' + tag +
+      '：源库 ' + esc(r.source_library) + ' / 源批次 ' + esc(r.source_batch) +
+      '，共 ' + (r.row_count ?? d.row_count) + ' 行</div>';
+    resetImport();
+    await refresh();
+  }catch(e){ showErr(msg, e); }
+}
+
 /* ---------- 查询 ---------- */
 
 function renderLensOptions(){
@@ -265,10 +393,12 @@ async function doQuery(){
     let h = '<p class="muted">视角：v' + d.version.version_no + '（' + (d.version.status === 'active' ? '现役' : '历史') +
       '）· 共 ' + d.row_count + ' 行' + (d.truncated ? '（已达上限，结果截断）' : '') + '</p>';
     if(!d.rows.length){ box.innerHTML = h + '<p class="muted">无匹配数据。</p>'; return; }
-    h += '<table><tr><th>批次</th><th>批次版本</th>' +
+    h += '<table><tr><th>批次</th><th>批次版本</th><th>源库号</th><th>源批次号</th>' +
       cols.map(c => '<th>' + esc(c.name) + '<br><span class="muted">' + TYPE_LABEL[c.type] + '</span></th>').join('') + '</tr>';
     d.rows.forEach(r => {
       h += '<tr><td>#' + r.batch_id + '</td><td>v' + r.batch_version_no + '</td>' +
+        '<td>' + (r.source_library ? esc(r.source_library) : '<span class="muted">—</span>') +
+        '</td><td>' + (r.source_batch ? esc(r.source_batch) : '<span class="muted">—</span>') + '</td>' +
         cols.map(c => {
           const val = r.values[c.name];
           return '<td>' + (val === null || val === undefined ? '<span class="nullcell">（空）</span>' : esc(val)) + '</td>';
@@ -302,10 +432,13 @@ function lensTo(v){
 function renderBatches(){
   const box = $('batches-box');
   if(!state.batches.length){ box.innerHTML = '<p class="muted">暂无批次。</p>'; return; }
-  let h = '<table><tr><th>批次</th><th>结构版本</th><th>文件名</th><th>行数</th><th>上传时间</th></tr>';
+  let h = '<table><tr><th>批次</th><th>结构版本</th><th>来源</th><th>源库号</th><th>源批次号</th><th>文件名</th><th>行数</th><th>上传时间</th></tr>';
   state.batches.forEach(b => {
-    h += '<tr><td>#' + b.id + '</td><td>v' + b.version_no + '</td><td>' + esc(b.filename) +
-      '</td><td>' + b.row_count + '</td><td>' + esc(b.uploaded_at) + '</td></tr>';
+    h += '<tr><td>#' + b.id + '</td><td>v' + b.version_no + '</td>' +
+      '<td>' + (b.source_library ? '离线补录导入' : 'CSV 直传') + '</td>' +
+      '<td>' + (b.source_library ? esc(b.source_library) : '<span class="muted">—</span>') + '</td>' +
+      '<td>' + (b.source_batch ? esc(b.source_batch) : '<span class="muted">—</span>') + '</td>' +
+      '<td>' + esc(b.filename) + '</td><td>' + b.row_count + '</td><td>' + esc(b.uploaded_at) + '</td></tr>';
   });
   box.innerHTML = h + '</table>';
 }

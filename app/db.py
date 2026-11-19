@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS batches (
     version_id  INTEGER NOT NULL REFERENCES schema_versions(id),
     filename    TEXT NOT NULL DEFAULT '',
     row_count   INTEGER NOT NULL,
-    uploaded_at TEXT NOT NULL
+    uploaded_at TEXT NOT NULL,
+    source_library TEXT,
+    source_batch   TEXT,
+    content_hash   TEXT
 );
 CREATE TABLE IF NOT EXISTS observations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +50,39 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 CREATE INDEX IF NOT EXISTS idx_obs_station_hour ON observations (station, hour_utc);
 CREATE INDEX IF NOT EXISTS idx_obs_batch ON observations (batch_id);
+-- 补录批次预览：钉住预览时的原始文件、字段配对与现役版本，入库只采用这份快照
+CREATE TABLE IF NOT EXISTS import_previews (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_library TEXT NOT NULL,
+    source_batch   TEXT NOT NULL,
+    filename       TEXT NOT NULL DEFAULT '',
+    content_hash   TEXT NOT NULL,
+    raw_text       TEXT NOT NULL,
+    version_id     INTEGER NOT NULL REFERENCES schema_versions(id),
+    mapping_json   TEXT NOT NULL,
+    row_count      INTEGER NOT NULL,
+    error_count    INTEGER NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'open'
+                       CHECK (status IN ('open', 'committed')),
+    batch_id       INTEGER REFERENCES batches(id),
+    created_at     TEXT NOT NULL
+);
 """
+
+# 依赖 batches 新增列的索引，须在旧库 ALTER 迁移完成后再创建
+_SOURCE_INDEX_SQL = """
+-- 同一源库的同号补录批次只允许入库一次（CSV 直传批次这三列为 NULL，不受约束）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_source
+    ON batches(source_library, source_batch)
+    WHERE source_library IS NOT NULL;
+"""
+
+# 旧库升级：batches 补三列（新库建表时已含，这里仅对存量库生效）
+_BATCHES_MIGRATIONS = (
+    ("source_library", "ALTER TABLE batches ADD COLUMN source_library TEXT"),
+    ("source_batch", "ALTER TABLE batches ADD COLUMN source_batch TEXT"),
+    ("content_hash", "ALTER TABLE batches ADD COLUMN content_hash TEXT"),
+)
 
 
 def db_path() -> str:
@@ -71,6 +106,11 @@ def init_db() -> None:
     with _lock:
         with connect() as conn:
             conn.executescript(SCHEMA)
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(batches)")}
+            for col, ddl in _BATCHES_MIGRATIONS:
+                if col not in existing:
+                    conn.execute(ddl)
+            conn.executescript(_SOURCE_INDEX_SQL)
 
 
 @contextmanager
